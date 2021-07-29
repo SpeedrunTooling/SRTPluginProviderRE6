@@ -1,6 +1,8 @@
 ﻿using ProcessMemory;
+using SRTPluginProviderRE6.Structs.GameStructs;
 using System;
 using System.Diagnostics;
+using System.Linq;
 
 namespace SRTPluginProviderRE6
 {
@@ -15,16 +17,31 @@ namespace SRTPluginProviderRE6
         public int ProcessExitCode => (memoryAccess != null) ? memoryAccess.ProcessExitCode : 0;
 
         // Pointer Address Variables
-        private int pointerAddressStats;
+        private int pointerAddressHP;
+        private int pointerAddressHP2;
+        private int pointerAddressDA;
         private int pointerAddressCurrentLevel;
 
         // Pointer Classes
         private IntPtr BaseAddress { get; set; }
 
         private MultilevelPointer PointerHPLeon { get; set; }
-        private MultilevelPointer[] PointerHP { get; set; }
+        private MultilevelPointer PointerHP { get; set; }
+        private MultilevelPointer PointerHP2 { get; set; }
         private MultilevelPointer PointerDA { get; set; }
         private MultilevelPointer PointerCurrentLevel { get; set; }
+
+        private GamePlayer NewPlayerObj = new GamePlayer();
+
+        public static Campaign CampaignID = Campaign.Leon;
+
+        public enum Campaign
+        {
+            Leon,
+            Chris,
+            Jake,
+            Ada
+        }
 
         internal GameMemoryRE6Scanner(Process process = null)
         {
@@ -46,128 +63,104 @@ namespace SRTPluginProviderRE6
             {
                 BaseAddress = NativeWrappers.GetProcessBaseAddress(pid, PInvoke.ListModules.LIST_MODULES_32BIT); // Bypass .NET's managed solution for getting this and attempt to get this info ourselves via PInvoke since some users are getting 299 PARTIAL COPY when they seemingly shouldn't.
                 //POINTERS
-                var position = 0;
-                if (PointerHP == null)
-                {
-                    PointerHP = new MultilevelPointer[8];
-                }
-                for (var i = 0; i < 8; i++)
-                {
-                    position = (i * 0x4) + 0x24;
-                    PointerHP[i] = new MultilevelPointer(memoryAccess, IntPtr.Add(BaseAddress, pointerAddressStats), position);
-                }
-                
-                PointerDA = new MultilevelPointer(memoryAccess, IntPtr.Add(BaseAddress, pointerAddressStats));
+                PointerHP = new MultilevelPointer(memoryAccess, IntPtr.Add(BaseAddress, pointerAddressHP), 0x364);
+                PointerHP2 = new MultilevelPointer(memoryAccess, IntPtr.Add(BaseAddress, pointerAddressHP2), 0xD20);
+
+                PointerDA = new MultilevelPointer(memoryAccess, IntPtr.Add(BaseAddress, pointerAddressDA), 0x0);
                 PointerCurrentLevel = new MultilevelPointer(memoryAccess, IntPtr.Add(BaseAddress, pointerAddressCurrentLevel));
             }
         }
 
         private void SelectPointerAddresses()
         {
-            pointerAddressStats = 0x13C6468;
+            pointerAddressHP = 0x1464430;
+            pointerAddressHP2 = 0x13B7384;
+            pointerAddressDA = 0x1427F64;
             pointerAddressCurrentLevel = 0x13C549C;
         }
 
         internal void UpdatePointers()
         {
-            for (var i = 0; i < 8; i++)
-            {
-                PointerHP[i].UpdatePointers();
-            }
+            PointerHP.UpdatePointers();
+            PointerHP2.UpdatePointers();
             PointerDA.UpdatePointers();
             PointerCurrentLevel.UpdatePointers();
         }
 
         internal unsafe IGameMemoryRE6 Refresh()
         {
-            bool success;
+            // Current Level ID
+            gameMemoryValues._currentLevel = PointerCurrentLevel.DerefInt(0x412A4);
+            SetCampaignID();
 
-            // Leon
-            fixed (short* p = &gameMemoryValues._leonCurrentHealth)
-                success = PointerHP[0].TryDerefShort(0xF10, p);
-            
-            fixed (short* p = &gameMemoryValues._leonMaxHealth)
-                success = PointerHP[0].TryDerefShort(0xF12, p);
+            // Player Names
+            gameMemoryValues._playerName = GetName()[0];
+            gameMemoryValues._playerName2 = GetName()[1];
 
-            fixed (int* p = &gameMemoryValues._leonDA)
-                success = PointerDA.TryDerefInt(0x4120, p);
+            // Player 1 HP
+            gameMemoryValues._player = PointerHP.Deref<GamePlayer>(0xF10);
 
-            // Helena
-            fixed (short* p = &gameMemoryValues._helenaCurrentHealth)
-                success = PointerHP[1].TryDerefShort(0xF10, p);
+            // Player 2 HP
+            gameMemoryValues._player2 = PointerHP.Address != PointerHP2.Address ? PointerHP2.Deref<GamePlayer>(0xF10) : NewPlayerObj;
 
-            fixed (short* p = &gameMemoryValues._helenaMaxHealth)
-                success = PointerHP[1].TryDerefShort(0xF12, p);
+            // DA Scores
+            gameMemoryValues._rankManager = PointerDA.Deref<GameDifficultyAdjustment>(0x4120);
 
-            fixed (int* p = &gameMemoryValues._helenaDA)
-                success = PointerDA.TryDerefInt(0x4124, p);
+            int[] DA = { 
+                gameMemoryValues._rankManager.Leon, 
+                gameMemoryValues._rankManager.Helena, 
+                gameMemoryValues._rankManager.Chris, 
+                gameMemoryValues._rankManager.Piers, 
+                gameMemoryValues._rankManager.Jake,
+                gameMemoryValues._rankManager.Sherry,
+                gameMemoryValues._rankManager.Ada,
+                gameMemoryValues._rankManager.Agent 
+            };
 
-            // Chris
-            fixed (short* p = &gameMemoryValues._chrisCurrentHealth)
-                success = PointerHP[2].TryDerefShort(0xF10, p);
-
-            fixed (short* p = &gameMemoryValues._chrisMaxHealth)
-                success = PointerHP[2].TryDerefShort(0xF12, p);
-
-            fixed (int* p = &gameMemoryValues._chrisDA)
-                success = PointerDA.TryDerefInt(0x4128, p);
-
-            // Piers
-            fixed (short* p = &gameMemoryValues._helenaCurrentHealth)
-                success = PointerHP[3].TryDerefShort(0xF10, p);
-
-            fixed (short* p = &gameMemoryValues._helenaMaxHealth)
-                success = PointerHP[3].TryDerefShort(0xF12, p);
-
-            fixed (int* p = &gameMemoryValues._piersDA)
-                success = PointerDA.TryDerefInt(0x412C, p);
-
-            // Jake
-            fixed (short* p = &gameMemoryValues._helenaCurrentHealth)
-                success = PointerHP[4].TryDerefShort(0xF10, p);
-
-            fixed (short* p = &gameMemoryValues._helenaMaxHealth)
-                success = PointerHP[4].TryDerefShort(0xF12, p);
-
-            fixed (int* p = &gameMemoryValues._jakeDA)
-                success = PointerDA.TryDerefInt(0x4130, p);
-
-            // Sherry
-            fixed (short* p = &gameMemoryValues._helenaCurrentHealth)
-                success = PointerHP[5].TryDerefShort(0xF10, p);
-
-            fixed (short* p = &gameMemoryValues._helenaMaxHealth)
-                success = PointerHP[5].TryDerefShort(0xF12, p);
-
-            fixed (int* p = &gameMemoryValues._sherryDA)
-                success = PointerDA.TryDerefInt(0x4134, p);
-
-            // Ada
-            fixed (short* p = &gameMemoryValues._helenaCurrentHealth)
-                success = PointerHP[6].TryDerefShort(0xF10, p);
-
-            fixed (short* p = &gameMemoryValues._helenaMaxHealth)
-                success = PointerHP[6].TryDerefShort(0xF12, p);
-
-            fixed (int* p = &gameMemoryValues._adaDA)
-                success = PointerDA.TryDerefInt(0x4138, p);
-
-            // Agent
-            fixed (short* p = &gameMemoryValues._helenaCurrentHealth)
-                success = PointerHP[7].TryDerefShort(0xF10, p);
-
-            fixed (short* p = &gameMemoryValues._helenaMaxHealth)
-                success = PointerHP[7].TryDerefShort(0xF12, p);
-
-            fixed (int* p = &gameMemoryValues._agentDA)
-                success = PointerDA.TryDerefInt(0x413C, p);
-
-            // Current Level
-            fixed (int* p = &gameMemoryValues._currentLevel)
-                success = PointerCurrentLevel.TryDerefInt(0x412A4, p);
+            gameMemoryValues._playerDA = GetDA(DA)[0];
+            gameMemoryValues._player2DA = GetDA(DA)[1];
 
             HasScanned = true;
             return gameMemoryValues;
+        }
+
+        private void SetCampaignID()
+        {
+            if (gameMemoryValues.CurrentLevel == 1100) CampaignID = Campaign.Leon;
+            else if (gameMemoryValues.CurrentLevel == 1110) CampaignID = Campaign.Chris;
+            else if (gameMemoryValues.CurrentLevel == 1101) CampaignID = Campaign.Jake;
+            else if (gameMemoryValues.CurrentLevel == 1130) CampaignID = Campaign.Ada;
+        }
+
+        public static ArraySegment<int> GetDA(int[] DAList)
+        {
+            switch (CampaignID)
+            {
+                case Campaign.Chris:
+                    return new ArraySegment<int>(DAList, 6, 2);
+                case Campaign.Jake:
+                    return new ArraySegment<int>(DAList, 4, 2);
+                case Campaign.Ada:
+                    return new ArraySegment<int>(DAList, 2, 2);
+                default:
+                    return new ArraySegment<int>(DAList, 0, 2);
+            }
+        }
+
+        public static ArraySegment<string> GetName()
+        {
+            string[] names = { "Leon: ", "Helena: ", "Chris: ", "Piers: ", "Jake: ", "Sherry: ", "Ada: ", "Agent: "};
+            switch (CampaignID)
+            {
+                case Campaign.Chris:
+                    return new ArraySegment<string>(names, 6, 2);
+                case Campaign.Jake:
+                    return new ArraySegment<string>(names, 4, 2);
+                case Campaign.Ada:
+                    return new ArraySegment<string>(names, 2, 2);
+                default:
+                    return new ArraySegment<string>(names, 0, 2);
+            }
         }
 
         private int? GetProcessId(Process process) => process?.Id;
